@@ -8,6 +8,8 @@ import os
 import sys
 from pathlib import Path
 
+import time
+
 from long_xls import __version__
 from long_xls.parser import parse, scan
 from long_xls.export import FORMATS, schema_json, write_schema
@@ -20,6 +22,33 @@ def _size_str(n: int) -> str:
         return f"{n / 1024:.1f} KB"
     else:
         return f"{n / (1024 * 1024):.1f} MB"
+
+
+# -- Progress bar ----------------------------------------------------------
+
+_BAR_WIDTH = 30
+
+def _make_progress(label: str, t0: float):
+    """Return a progress callback that draws a bar to stderr."""
+    last_pct = [-1]  # mutable closure
+
+    def _progress(cur: int, total: int) -> None:
+        if total == 0:
+            return
+        pct = min(cur * 100 // total, 100)
+        if pct == last_pct[0]:
+            return
+        last_pct[0] = pct
+        filled = _BAR_WIDTH * pct // 100
+        bar = "#" * filled + "-" * (_BAR_WIDTH - filled)
+        elapsed = time.perf_counter() - t0
+        sys.stderr.write(f"\r  {label} [{bar}] {pct:3d}%  {elapsed:.1f}s")
+        sys.stderr.flush()
+        if pct >= 100:
+            sys.stderr.write("\n")
+            sys.stderr.flush()
+
+    return _progress
 
 
 def _run_convert(args: argparse.Namespace) -> int:
@@ -41,7 +70,9 @@ def _run_convert(args: argparse.Namespace) -> int:
             continue
 
         print(f"Parsing {p.name} ({_size_str(p.stat().st_size)}) ...")
-        sheet = parse(p, encoding=args.encoding)
+        t0 = time.perf_counter()
+        progress_cb = _make_progress("Reading", t0)
+        sheet = parse(p, encoding=args.encoding, progress=progress_cb)
 
         # Overflow info
         max_wraps = max(sheet.wraps_per_col.values()) if sheet.wraps_per_col else 0
@@ -62,8 +93,15 @@ def _run_convert(args: argparse.Namespace) -> int:
         # Export
         ext = fmt
         out_path = out_dir / f"{p.stem}.{ext}"
+        sys.stderr.write(f"  Writing {ext.upper()} ...")
+        sys.stderr.flush()
+        t_export = time.perf_counter()
         exporter(sheet, out_path)
-        print(f"  -> {out_path} ({_size_str(out_path.stat().st_size)})")
+        elapsed_export = time.perf_counter() - t_export
+        elapsed_total = time.perf_counter() - t0
+        sys.stderr.write(f" done ({elapsed_export:.1f}s)\n")
+        sys.stderr.flush()
+        print(f"  -> {out_path} ({_size_str(out_path.stat().st_size)})  [{elapsed_total:.1f}s total]")
 
         if sheet.warnings:
             for w in sheet.warnings:

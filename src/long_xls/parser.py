@@ -1,8 +1,8 @@
 """BIFF record parser for overflowed XLS files.
 
 Handles standalone BIFF streams (no OLE2 container) where row indices
-wrap around at 65,536.  This is the format produced by programs like
-Kiwoom HTS that dump cell records without respecting the XLS row limit.
+wrap around at 65,536.  This is the format produced by programs that
+dump cell records without respecting the XLS row limit.
 
 Binary layout observed
 ----------------------
@@ -21,9 +21,10 @@ from __future__ import annotations
 
 import math
 import struct
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 # -- BIFF opcodes ----------------------------------------------------------
 
@@ -42,6 +43,11 @@ _OPCODE_NAME = {
 CELL_OPCODES = frozenset({LABEL, NUMBER, INTEGER})
 
 ROW_LIMIT = 65_536  # wrap boundary
+
+# struct format caches for hot path
+_UNPACK_HH = struct.Struct("<HH").unpack_from
+_UNPACK_D  = struct.Struct("<d").unpack_from
+_UNPACK_H  = struct.Struct("<H").unpack_from
 
 
 # -- Data containers -------------------------------------------------------
@@ -70,14 +76,25 @@ class SheetData:
     warnings: list[str] = field(default_factory=list)
 
 
+# -- Progress callback type ------------------------------------------------
+
+ProgressFn = Callable[[int, int], None]
+"""progress(current_bytes, total_bytes)"""
+
+
+def _null_progress(cur: int, total: int) -> None:
+    pass
+
+
 # -- Low-level record iteration --------------------------------------------
 
 def _iter_records(data: bytes) -> Iterator[tuple[int, bytes, int]]:
     """Yield (opcode, payload, offset) for each BIFF record."""
     pos = 0
     end = len(data)
+    unpack = _UNPACK_HH
     while pos + 4 <= end:
-        opcode, length = struct.unpack_from("<HH", data, pos)
+        opcode, length = unpack(data, pos)
         if opcode == 0 and length == 0:
             break
         payload_end = pos + 4 + length
@@ -98,56 +115,12 @@ def _try_decode(raw: bytes, encodings: tuple[str, ...]) -> tuple[str, str]:
     return raw.hex(), "hex"
 
 
-# -- Cell iteration with wrap tracking -------------------------------------
-
-def _iter_cells(
-    data: bytes,
-    encodings: tuple[str, ...] = ("cp949", "euc-kr", "utf-8", "latin-1"),
-) -> Iterator[tuple[Cell, str]]:
-    """Yield (Cell, encoding_used) with logical rows that account for wraps."""
-    last_raw: dict[int, int] = {}     # col -> last raw row seen
-    wraps: dict[int, int] = {}        # col -> wrap count
-
-    for opcode, payload, _offset in _iter_records(data):
-        if opcode not in CELL_OPCODES or len(payload) < 7:
-            continue
-
-        raw_row, col = struct.unpack_from("<HH", payload, 0)
-
-        # Detect wrap-around
-        prev = last_raw.get(col)
-        if prev is not None and raw_row < prev:
-            wraps[col] = wraps.get(col, 0) + 1
-        last_raw[col] = raw_row
-
-        logical_row = raw_row + wraps.get(col, 0) * ROW_LIMIT
-
-        enc_used = ""
-        if opcode == LABEL:
-            str_len = payload[7]
-            text, enc_used = _try_decode(payload[8:8 + str_len], encodings)
-            yield Cell(logical_row, col, text, opcode), enc_used
-
-        elif opcode == NUMBER:
-            if len(payload) < 15:
-                continue
-            val = struct.unpack_from("<d", payload, 7)[0]
-            if math.isfinite(val) and val == int(val) and abs(val) < 2**53:
-                val = int(val)
-            yield Cell(logical_row, col, val, opcode), ""
-
-        elif opcode == INTEGER:
-            if len(payload) < 9:
-                continue
-            val = struct.unpack_from("<H", payload, 7)[0]
-            yield Cell(logical_row, col, val, opcode), ""
-
-
 # -- Public API -------------------------------------------------------------
 
 def parse(
     path: str | Path,
     encoding: str = "cp949",
+    progress: ProgressFn | None = None,
 ) -> SheetData:
     """Parse a BIFF XLS file and return structured data.
 
@@ -156,6 +129,7 @@ def parse(
     path : file path
     encoding : primary encoding to try for strings (default cp949).
         Falls back through euc-kr, utf-8, latin-1 automatically.
+    progress : optional callback(current_bytes, total_bytes) for UI.
 
     Returns
     -------
@@ -164,23 +138,20 @@ def parse(
     path = Path(path)
     data = path.read_bytes()
     file_size = len(data)
+    on_progress = progress or _null_progress
 
-    encodings = (encoding, "cp949", "euc-kr", "utf-8", "latin-1")
-    # deduplicate while keeping order
+    # Build deduped encoding list
+    enc_order: list[str] = []
     seen: set[str] = set()
-    enc_list: list[str] = []
-    for e in encodings:
+    for e in (encoding, "cp949", "euc-kr", "utf-8", "latin-1"):
         if e not in seen:
             seen.add(e)
-            enc_list.append(e)
-    enc_tuple = tuple(enc_list)
+            enc_order.append(e)
+    # The "hot" encoding (first successful) will be moved to front
+    hot_enc: str | None = None
 
-    # Count records
+    # ---- Single-pass parse ------------------------------------------------
     record_counts: dict[int, int] = {}
-    for opcode, _payload, _off in _iter_records(data):
-        record_counts[opcode] = record_counts.get(opcode, 0) + 1
-
-    # Parse cells
     headers: dict[int, str] = {}
     col_data: dict[int, list[Any]] = {}
     wraps_per_col: dict[int, int] = {}
@@ -188,26 +159,93 @@ def parse(
     actual_encoding = encoding
     header_done = False
 
-    for cell, enc_used in _iter_cells(data, enc_tuple):
-        if enc_used:
-            actual_encoding = enc_used
+    # Local aliases for hot-path speed
+    unpack_hh = _UNPACK_HH
+    unpack_d = _UNPACK_D
+    unpack_h = _UNPACK_H
 
-        if not header_done and cell.logical_row == 0:
-            headers[cell.col] = str(cell.value) if cell.value is not None else f"col{cell.col}"
+    pos = 0
+    end = file_size
+    progress_interval = max(file_size // 50, 65536)  # ~50 updates
+    next_progress = progress_interval
+
+    while pos + 4 <= end:
+        opcode, length = unpack_hh(data, pos)
+        if opcode == 0 and length == 0:
+            break
+        payload_start = pos + 4
+        payload_end = payload_start + length
+        if payload_end > end:
+            break
+
+        # Count every record type
+        record_counts[opcode] = record_counts.get(opcode, 0) + 1
+
+        # Progress callback
+        if pos >= next_progress:
+            on_progress(pos, file_size)
+            next_progress = pos + progress_interval
+
+        # Skip non-cell records
+        if opcode not in CELL_OPCODES or length < 7:
+            pos = payload_end
             continue
 
-        if not header_done and cell.logical_row != 0:
-            header_done = True
+        raw_row, col = unpack_hh(data, payload_start)
 
-        col_data.setdefault(cell.col, []).append(cell.value)
-
-        # Track wraps
-        raw_row = cell.logical_row % ROW_LIMIT
-        prev = last_raw.get(cell.col)
+        # Wrap-around detection
+        prev = last_raw.get(col)
         if prev is not None and raw_row < prev:
-            wraps_per_col[cell.col] = wraps_per_col.get(cell.col, 0) + 1
-        last_raw[cell.col] = raw_row
+            wraps_per_col[col] = wraps_per_col.get(col, 0) + 1
+        last_raw[col] = raw_row
 
+        # Decode value
+        val: Any = None
+        enc_used = ""
+
+        if opcode == LABEL:
+            str_len = data[payload_start + 7]
+            raw_str = data[payload_start + 8: payload_start + 8 + str_len]
+            # Hot encoding path: try last successful encoding first
+            if hot_enc:
+                try:
+                    val = raw_str.decode(hot_enc)
+                    enc_used = hot_enc
+                except (UnicodeDecodeError, LookupError):
+                    val, enc_used = _try_decode(raw_str, tuple(enc_order))
+                    hot_enc = enc_used
+            else:
+                val, enc_used = _try_decode(raw_str, tuple(enc_order))
+                hot_enc = enc_used
+
+        elif opcode == NUMBER:
+            if length < 15:
+                pos = payload_end
+                continue
+            val = unpack_d(data, payload_start + 7)[0]
+            if math.isfinite(val) and val == int(val) and abs(val) < 2**53:
+                val = int(val)
+
+        elif opcode == INTEGER:
+            if length < 9:
+                pos = payload_end
+                continue
+            val = unpack_h(data, payload_start + 7)[0]
+
+        # Header vs data
+        if not header_done and raw_row == 0 and wraps_per_col.get(col, 0) == 0:
+            headers[col] = str(val) if val is not None else f"col{col}"
+        else:
+            if not header_done:
+                header_done = True
+            col_data.setdefault(col, []).append(val)
+
+        pos = payload_end
+
+    # Final progress
+    on_progress(file_size, file_size)
+
+    # ---- Assemble result --------------------------------------------------
     num_cols = max(len(headers), len(col_data), 0)
     if num_cols == 0:
         return SheetData(
@@ -217,10 +255,11 @@ def parse(
             warnings=["No cell data found"],
         )
 
-    # Ensure headers list is ordered
+    if enc_used:
+        actual_encoding = enc_used
+
     header_list = [headers.get(c, f"col{c}") for c in range(num_cols)]
 
-    # Align column lengths
     warnings: list[str] = []
     lengths = {c: len(v) for c, v in col_data.items()}
     max_len = max(lengths.values()) if lengths else 0
@@ -244,11 +283,15 @@ def parse(
     )
 
 
-def parse_to_dataframe(path: str | Path, encoding: str = "cp949"):
+def parse_to_dataframe(
+    path: str | Path,
+    encoding: str = "cp949",
+    progress: ProgressFn | None = None,
+):
     """Parse and return a pandas DataFrame directly."""
     import pandas as pd
 
-    sheet = parse(path, encoding)
+    sheet = parse(path, encoding, progress=progress)
     data = {
         sheet.headers[c]: sheet.columns.get(c, [None] * sheet.num_data_rows)
         for c in range(sheet.num_columns)
@@ -267,7 +310,7 @@ def scan(path: str | Path) -> dict[str, Any]:
     for opcode, payload, _off in _iter_records(data):
         record_counts[opcode] = record_counts.get(opcode, 0) + 1
         if opcode in CELL_OPCODES and len(payload) >= 4:
-            raw_row = struct.unpack_from("<H", payload, 0)[0]
+            raw_row = _UNPACK_H(payload, 0)[0]
             if opcode in row_range:
                 lo, hi, cnt = row_range[opcode]
                 row_range[opcode] = (min(lo, raw_row), max(hi, raw_row), cnt + 1)
