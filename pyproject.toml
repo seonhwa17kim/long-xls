@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "long-xls"
 version = "0.1.0"
 description = "Recover data from XLS files that exceed the 65,536-row limit"
-readme = "README.md"
+readme = "README.en.md"
 license = "MIT"
 requires-python = ">=3.9"
 authors = [{ name = "seonhwa17kim" }]
