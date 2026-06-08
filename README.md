@@ -2,12 +2,14 @@
 
 # long-xls
 
-**Recover data from XLS files that exceed the 65,536-row limit.**
+**A simple tool to recover data from XLS files that exceed the 65,536-row limit.**
 
-Some programs — stock trading platforms, industrial data loggers, legacy
-reporting tools — write BIFF cell records past the XLS row limit without
-switching to XLSX.  The data is *physically present* in the file, but
-every standard tool (Excel, pandas, xlrd) either truncates it or crashes.
+The XLS format is structurally limited to 65,536 rows per sheet.  However,
+some programs — legacy reporting utils, converting tools, stock trading
+platform exporters, etc. — keep writing BIFF cell records past this limit.
+The data is physically present in the file, but most programs and libraries
+(Excel, pandas, xlrd) either silently truncate it or throw an error, leaving
+no way to read the stored data.
 
 **long-xls** reads the raw BIFF binary stream, detects row-index
 wrap-arounds at the 65,536 boundary, and reconstructs the full dataset.
@@ -24,8 +26,6 @@ wrap-arounds at the 65,536 boundary, and reconstructs the full dataset.
 │  Row 370,000 ...... ✗ INVISIBLE — but recoverable!  │
 └─────────────────────────────────────────────────────┘
 ```
-
-Excel shows 65,536 rows.  **long-xls recovers all 370,000.**
 
 ## Install
 
@@ -67,7 +67,7 @@ long-xls *.xls -f csv -o output/
 | `long-xls data.xls -f parquet` | Convert to parquet |
 | `long-xls data.xls --schema` | Also write `.schema.json` |
 | `long-xls schema data.xls` | Print JSON schema to stdout |
-| `long-xls scan data.xls` | Quick file scan (record counts, no full parse) |
+| `long-xls scan data.xls` | Quick file scan (record counts only) |
 
 ### Options
 
@@ -76,6 +76,7 @@ long-xls *.xls -f csv -o output/
 | `-f`, `--format` | `xlsx` | Output format: `xlsx`, `csv`, `parquet` |
 | `-o`, `--output-dir` | same as input | Output directory |
 | `-e`, `--encoding` | `cp949` | Text encoding for string cells |
+| `-y`, `--force` | off | Overwrite existing files without asking |
 | `--schema` | off | Write a `.schema.json` alongside output |
 
 ## Python API
@@ -115,35 +116,31 @@ print(json.dumps(schema_json(sheet), indent=2))
 }
 ```
 
-## What It Handles
+## Test Files
 
-| Feature | Status |
-|---|---|
-| BIFF2 LABEL (string cells) | Supported |
-| BIFF2 NUMBER (float cells) | Supported |
-| BIFF2 INTEGER (int cells) | Supported |
-| Row wrap-around at 65,536 | Auto-detected |
-| Column-major storage order | Auto-detected |
-| Multiple encodings (CP949 / EUC-KR / UTF-8) | Auto-fallback |
-| Standalone BIFF stream (no OLE2 container) | Supported |
-| OLE2 compound files | Not yet |
+### Synthetic test files (generator included)
 
-## How It Works
+Run `tests/generate_test_xls.py` to generate long-XLS test files of
+various sizes.  It writes raw BIFF2 records to reproduce the row
+wrap-around behaviour.
 
-Standard XLS (BIFF) format limits sheets to 65,536 rows.  Some programs
-ignore this limit and keep writing cell records.  The row index, stored
-as a 16-bit unsigned integer, wraps around to 0 at the boundary.
-
-long-xls tracks the wrap count per column and reconstructs logical row
-numbers:
-
-```
-logical_row = raw_row + (wrap_count * 65536)
+```bash
+python tests/generate_test_xls.py
 ```
 
-The data in these files is stored in **column-major order** — all values
-for column 0, then all values for column 1, etc.  long-xls handles this
-transparently.
+| File | Rows | Wraps | Encoding | Purpose |
+|---|---|---|---|---|
+| `test_100k_rows.xls` | 100,000 | 1 | UTF-8 | Basic recovery verification |
+| `test_200k_rows.xls` | 200,000 | 3 | UTF-8 | Multi-wrap verification |
+| `test_70k_cp949.xls` | 70,000 | 1 | CP949 | Korean encoding verification |
+
+### Real-world example: Kiwoom Securities HTS chart data
+
+Futures tick chart data exported from Kiwoom Securities HTS.  Contains
+371,700 rows, but Excel only shows up to 65,535.  long-xls recovers
+the entire dataset.
+
+- `2024.0808_KOSPI200_Tick.xls` — 371,700 rows (5 wraps), 29.7 MB
 
 ## Building a Standalone Executable
 
@@ -152,6 +149,10 @@ pip install pyinstaller
 python build_exe.py          # produces dist/long-xls.exe (Windows)
 ```
 
+## Author
+
+seonhwa17kim (with help from GPT-o3, Gemini 2.5 Pro, Claude Opus 4)
+
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) Copyright (c) 2026 seonhwa17kim
