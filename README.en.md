@@ -1,4 +1,4 @@
-[한국어](README.md) | **English**
+**[GitHub](https://github.com/seonhwa17kim/long-xls)** | [한국어](https://github.com/seonhwa17kim/long-xls/blob/main/README.md)
 
 # long-xls
 
