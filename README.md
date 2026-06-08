@@ -1,102 +1,101 @@
-[한국어](README.ko.md) | **English**
+**한국어** | [English](README.en.md)
 
 # long-xls
 
-**A simple tool to recover data from XLS files that exceed the 65,536-row limit.**
+**65,536행 제한을 초과한 XLS 파일의 데이터를 복원하는 간단한 도구**
 
-The XLS format is structurally limited to 65,536 rows per sheet.  However,
-some programs — legacy reporting utils, converting tools, stock trading
-platform exporters, etc. — keep writing BIFF cell records past this limit.
-The data is physically present in the file, but most programs and libraries
-(Excel, pandas, xlrd) either silently truncate it or throw an error, leaving
-no way to read the stored data.
+원래 XLS 파일은 구조적으로 65,536행 제한이 있어 그 이상의 행을 기록할 수 없다.
+그러나 일부 프로그램 — legacy reporting utils, converting tools, 증권사 HTS
+exporters 등 — 은 XLS 행 제한을 넘어서도 BIFF 셀 레코드를 계속 기록하는 경우가
+있다. 이 경우 실제 데이터는 파일 안에 존재하지만, 대부분의 프로그램이나
+라이브러리(Excel, pandas, xlrd 등)에서는 뒷부분을 잘라 버리거나 에러를 내기
+때문에 저장된 데이터를 읽을 방법이 없다.
 
-**long-xls** reads the raw BIFF binary stream, detects row-index
-wrap-arounds at the 65,536 boundary, and reconstructs the full dataset.
+**long-xls**는 BIFF 바이너리 스트림을 직접 읽고, 65,536 경계에서의
+row index wrap-around를 감지하여 전체 데이터셋을 복원하는 도구이다.
 
-## The Problem
+## 문제 상황
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  Your XLS file (e.g. 370,000 rows of trade data)    │
-│                                                     │
-│  Row 1 ............ ✓ visible in Excel              │
-│  Row 65,536 ....... ✓ visible in Excel              │
-│  Row 65,537 ....... ✗ INVISIBLE — data is there     │
-│  Row 370,000 ...... ✗ INVISIBLE — but recoverable!  │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│  XLS 파일 (예: 37만 행의 데이터)           │
+│                                                      │
+│  Row 1 ............ ✓ Excel에서 보임                  │
+│  Row 65,536 ....... ✓ Excel에서 보임                  │
+│  Row 65,537 ....... ✗ 안 보임 — 데이터는 있음          │
+│  Row 370,000 ...... ✗ 안 보임 — 하지만 복원 가능!      │
+└──────────────────────────────────────────────────────┘
 ```
 
-## Install
+## 설치
 
 ```bash
-pip install long-xls              # xlsx output (default)
-pip install "long-xls[parquet]"   # + parquet support
-pip install "long-xls[all]"       # everything
+pip install long-xls              # xlsx 출력 (기본)
+pip install "long-xls[parquet]"   # + parquet 지원
+pip install "long-xls[all]"       # 전부
 ```
 
-Or download a **standalone executable** from
-[Releases](https://github.com/seonhwa17kim/long-xls/releases) — no
-Python required.
+또는 [Releases](https://github.com/seonhwa17kim/long-xls/releases)에서
+**독립 실행파일**을 다운로드 — Python 설치 불필요.
 
-## Quick Start
+## 빠른 시작
 
 ```bash
-# Convert to xlsx (default)
+# xlsx로 변환 (기본)
 long-xls data.xls
 
-# Convert to csv
+# csv로 변환
 long-xls data.xls -f csv
 
-# Convert to parquet
+# parquet으로 변환
 long-xls data.xls -f parquet
 
-# Include a JSON schema sidecar file
+# JSON 스키마 파일도 함께 생성
 long-xls data.xls --schema
 
-# Multiple files at once
+# 여러 파일 일괄 변환
 long-xls *.xls -f csv -o output/
 ```
 
-## Commands
+## 명령어
 
-| Command | Description |
+| 명령 | 설명 |
 |---|---|
-| `long-xls data.xls` | Convert to xlsx (default) |
-| `long-xls data.xls -f csv` | Convert to csv |
-| `long-xls data.xls -f parquet` | Convert to parquet |
-| `long-xls data.xls --schema` | Also write `.schema.json` |
-| `long-xls schema data.xls` | Print JSON schema to stdout |
-| `long-xls scan data.xls` | Quick file scan (record counts only) |
+| `long-xls data.xls` | xlsx로 변환 (기본) |
+| `long-xls data.xls -f csv` | csv로 변환 |
+| `long-xls data.xls -f parquet` | parquet으로 변환 |
+| `long-xls data.xls --schema` | `.schema.json` 파일도 생성 |
+| `long-xls schema data.xls` | JSON 스키마를 stdout으로 출력 |
+| `long-xls scan data.xls` | 빠른 파일 스캔 (레코드 수만 확인) |
 
-### Options
+### 옵션
 
-| Option | Default | Description |
+| 옵션 | 기본값 | 설명 |
 |---|---|---|
-| `-f`, `--format` | `xlsx` | Output format: `xlsx`, `csv`, `parquet` |
-| `-o`, `--output-dir` | same as input | Output directory |
-| `-e`, `--encoding` | `cp949` | Text encoding for string cells |
-| `-y`, `--force` | off | Overwrite existing files without asking |
-| `--schema` | off | Write a `.schema.json` alongside output |
+| `-f`, `--format` | `xlsx` | 출력 형식: `xlsx`, `csv`, `parquet` |
+| `-o`, `--output-dir` | 입력 파일과 동일 | 출력 디렉토리 |
+| `-e`, `--encoding` | `cp949` | 문자열 셀의 텍스트 인코딩 |
+| `-y`, `--force` | 끔 | 기존 파일 무조건 덮어쓰기 |
+| `--schema` | 끔 | 출력 파일과 함께 `.schema.json` 생성 |
 
 ## Python API
 
 ```python
 from long_xls import parse, parse_to_dataframe, schema_json
 
-# Parse and inspect
+# 파싱 및 확인
 sheet = parse("data.xls")
-print(f"{sheet.num_data_rows:,} rows recovered")
+print(f"{sheet.num_data_rows:,}행 복원됨")
 
-# Get a pandas DataFrame
+# pandas DataFrame으로 변환
 df, sheet = parse_to_dataframe("data.xls")
 
-# Export schema as JSON
+# 스키마를 JSON으로 출력
 import json
 print(json.dumps(schema_json(sheet), indent=2))
 ```
 
-## Schema Output Example
+## 스키마 출력 예시
 
 ```json
 {
@@ -116,43 +115,41 @@ print(json.dumps(schema_json(sheet), indent=2))
 }
 ```
 
-## Test Files
+## 테스트 파일
 
-### Synthetic test files (generator included)
+### 합성 테스트 파일 (생성기 포함)
 
-Run `tests/generate_test_xls.py` to generate long-XLS test files of
-various sizes.  It writes raw BIFF2 records to reproduce the row
-wrap-around behaviour.
+`tests/generate_test_xls.py`를 실행하면 다양한 크기의 long-XLS 테스트 파일을
+자동으로 생성한다. BIFF2 레코드를 직접 써서 row wrap-around를 재현한다.
 
 ```bash
 python tests/generate_test_xls.py
 ```
 
-| File | Rows | Wraps | Encoding | Purpose |
+| 파일 | 행 수 | Wraps | 인코딩 | 용도 |
 |---|---|---|---|---|
-| `test_100k_rows.xls` | 100,000 | 1 | UTF-8 | Basic recovery verification |
-| `test_200k_rows.xls` | 200,000 | 3 | UTF-8 | Multi-wrap verification |
-| `test_70k_cp949.xls` | 70,000 | 1 | CP949 | Korean encoding verification |
+| `test_100k_rows.xls` | 100,000 | 1 | UTF-8 | 기본 복원 검증 |
+| `test_200k_rows.xls` | 200,000 | 3 | UTF-8 | 다중 wrap 검증 |
+| `test_70k_cp949.xls` | 70,000 | 1 | CP949 | 한국어 인코딩 검증 |
 
-### Real-world example: Kiwoom Securities HTS chart data
+### 실제 사례: 키움증권 HTS 차트 데이터
 
-Futures tick chart data exported from Kiwoom Securities HTS.  Contains
-371,700 rows, but Excel only shows up to 65,535.  long-xls recovers
-the entire dataset.
+키움증권 HTS에서 내보낸 선물 틱 차트 데이터로, 371,700행이 기록되어 있으나
+Excel에서는 65,535행까지만 보인다. long-xls로 전체 복원이 가능하다.
 
-- `20240808_KOSPI200_Tick_Kiwoom.xls` — 371,700 rows (5 wraps), 29.7 MB
+- `20240808_KOSPI200_Tick_Kiwoom.xls` — 371,700행 (5회 wrap), 29.7MB
 
-## Building a Standalone Executable
+## 독립 실행파일 빌드
 
 ```bash
 pip install pyinstaller
-python build_exe.py          # produces dist/long-xls.exe (Windows)
+python build_exe.py          # dist/long-xls.exe (Windows) 생성
 ```
 
-## Author
+## 개발자
 
-seonhwa17kim (with help from GPT-5.5, Gemini 3.5, Claude Opus 4.8)
+seonhwa17kim (GPT-o3, Gemini 2.5 Pro, Claude Opus 4 도움)
 
-## License
+## 라이선스
 
 [MIT](LICENSE) Copyright (c) 2026 seonhwa17kim
