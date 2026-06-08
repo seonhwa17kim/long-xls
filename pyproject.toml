@@ -47,3 +47,6 @@ long-xls = "long_xls.cli:main"
 [project.urls]
 Homepage = "https://github.com/seonhwa17kim/long-xls"
 Issues = "https://github.com/seonhwa17kim/long-xls/issues"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

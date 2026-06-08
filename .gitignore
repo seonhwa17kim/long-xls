@@ -5,3 +5,9 @@ dist/
 build/
 *.spec
 test_output/
+tests/fixtures/*.xls
+tests/fixtures/*.csv
+tests/fixtures/*.xlsx
+tests/fixtures/*.parquet
+tests/fixtures/*.json
+.pytest_cache/
