@@ -1,0 +1,48 @@
+{
+  "file": "20240808_KOSPI200_Tick_Kiwoom.xls",
+  "file_size": 29736094,
+  "encoding": "cp949",
+  "num_columns": 4,
+  "num_data_rows": 371700,
+  "row_limit_exceeded": true,
+  "wraps": {
+    "0": 5,
+    "1": 5,
+    "2": 5,
+    "3": 5
+  },
+  "columns": [
+    {
+      "index": 0,
+      "name": "날짜",
+      "type": "string",
+      "non_null_count": 371700
+    },
+    {
+      "index": 1,
+      "name": "시간",
+      "type": "string",
+      "non_null_count": 371700
+    },
+    {
+      "index": 2,
+      "name": "종가",
+      "type": "float",
+      "non_null_count": 371700
+    },
+    {
+      "index": 3,
+      "name": "거래량",
+      "type": "integer",
+      "non_null_count": 371700
+    }
+  ],
+  "record_types": {
+    "NUMBER": 743400,
+    "LABEL": 743404,
+    "EOF": 1,
+    "DIMENSIONS": 1,
+    "BOF": 1
+  },
+  "warnings": []
+}

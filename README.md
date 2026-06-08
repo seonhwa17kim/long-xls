@@ -140,7 +140,7 @@ Futures tick chart data exported from Kiwoom Securities HTS.  Contains
 371,700 rows, but Excel only shows up to 65,535.  long-xls recovers
 the entire dataset.
 
-- `2024.0808_KOSPI200_Tick.xls` — 371,700 rows (5 wraps), 29.7 MB
+- `20240808_KOSPI200_Tick_Kiwoom.xls` — 371,700 rows (5 wraps), 29.7 MB
 
 ## Building a Standalone Executable
 
@@ -151,7 +151,7 @@ python build_exe.py          # produces dist/long-xls.exe (Windows)
 
 ## Author
 
-seonhwa17kim (with help from GPT-o3, Gemini 2.5 Pro, Claude Opus 4)
+seonhwa17kim (with help from GPT-5.5, Gemini 3.5, Claude Opus 4.8)
 
 ## License
 

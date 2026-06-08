@@ -1,0 +1,41 @@
+{
+  "file": "long-xls\\tests\\fixtures\\test_200k_rows.xls",
+  "file_size": 11900076,
+  "encoding": "cp949",
+  "num_columns": 3,
+  "num_data_rows": 200000,
+  "row_limit_exceeded": true,
+  "wraps": {
+    "0": 3,
+    "1": 3,
+    "2": 3
+  },
+  "columns": [
+    {
+      "index": 0,
+      "name": "id",
+      "type": "integer",
+      "non_null_count": 200000
+    },
+    {
+      "index": 1,
+      "name": "name",
+      "type": "string",
+      "non_null_count": 200000
+    },
+    {
+      "index": 2,
+      "name": "value",
+      "type": "float",
+      "non_null_count": 200000
+    }
+  ],
+  "record_types": {
+    "NUMBER": 400000,
+    "LABEL": 200003,
+    "EOF": 1,
+    "DIMENSIONS": 1,
+    "BOF": 1
+  },
+  "warnings": []
+}
