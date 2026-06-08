@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
-from pathlib import Path
-
 import time
+from pathlib import Path
 
 from long_xls import __version__
 from long_xls.parser import parse, scan
@@ -27,6 +25,7 @@ def _size_str(n: int) -> str:
 # -- Progress bar ----------------------------------------------------------
 
 _BAR_WIDTH = 30
+
 
 def _make_progress(label: str, t0: float):
     """Return a progress callback that draws a bar to stderr."""
@@ -51,6 +50,57 @@ def _make_progress(label: str, t0: float):
     return _progress
 
 
+# -- File conflict resolution ----------------------------------------------
+
+def _resolve_output_path(out_path: Path, force: bool) -> Path | None:
+    """Handle existing output file.
+
+    Returns the path to write to, or None to skip.
+    With --force, always overwrites without asking.
+    """
+    if not out_path.exists():
+        return out_path
+
+    if force:
+        return out_path
+
+    # Interactive prompt
+    print(f"\n  File already exists: {out_path}")
+    print(f"    [o] Overwrite")
+    print(f"    [r] Rename (add number suffix)")
+    print(f"    [s] Skip")
+    while True:
+        try:
+            choice = input("  Choice [o/r/s]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return None
+
+        if choice == "o":
+            return out_path
+        elif choice == "r":
+            return _numbered_path(out_path)
+        elif choice == "s":
+            return None
+        else:
+            print("    Please enter o, r, or s.")
+
+
+def _numbered_path(p: Path) -> Path:
+    """Return path with (2), (3), ... suffix before extension."""
+    stem = p.stem
+    ext = p.suffix
+    parent = p.parent
+    n = 2
+    while True:
+        candidate = parent / f"{stem} ({n}){ext}"
+        if not candidate.exists():
+            return candidate
+        n += 1
+
+
+# -- Commands --------------------------------------------------------------
+
 def _run_convert(args: argparse.Namespace) -> int:
     files = args.files
     if not files:
@@ -63,6 +113,8 @@ def _run_convert(args: argparse.Namespace) -> int:
         print(f"Error: unknown format '{fmt}'", file=sys.stderr)
         return 1
 
+    force = getattr(args, "force", False)
+
     for fpath in files:
         p = Path(fpath)
         if not p.is_file():
@@ -71,8 +123,8 @@ def _run_convert(args: argparse.Namespace) -> int:
 
         print(f"Parsing {p.name} ({_size_str(p.stat().st_size)}) ...")
         t0 = time.perf_counter()
-        progress_cb = _make_progress("Reading", t0)
-        sheet = parse(p, encoding=args.encoding, progress=progress_cb)
+        progress_read = _make_progress("Reading", t0)
+        sheet = parse(p, encoding=args.encoding, progress=progress_read)
 
         # Overflow info
         max_wraps = max(sheet.wraps_per_col.values()) if sheet.wraps_per_col else 0
@@ -87,20 +139,22 @@ def _run_convert(args: argparse.Namespace) -> int:
         # Schema
         if args.schema:
             schema_dest = out_dir / f"{p.stem}.schema.json"
-            write_schema(sheet, schema_dest)
-            print(f"  -> {schema_dest} ({_size_str(schema_dest.stat().st_size)})")
+            schema_dest = _resolve_output_path(schema_dest, force)
+            if schema_dest:
+                write_schema(sheet, schema_dest)
+                print(f"  -> {schema_dest} ({_size_str(schema_dest.stat().st_size)})")
 
         # Export
-        ext = fmt
-        out_path = out_dir / f"{p.stem}.{ext}"
-        sys.stderr.write(f"  Writing {ext.upper()} ...")
-        sys.stderr.flush()
-        t_export = time.perf_counter()
-        exporter(sheet, out_path)
-        elapsed_export = time.perf_counter() - t_export
+        out_path = out_dir / f"{p.stem}.{fmt}"
+        out_path = _resolve_output_path(out_path, force)
+        if out_path is None:
+            print("  Skipped.")
+            continue
+
+        t_write = time.perf_counter()
+        progress_write = _make_progress(f"Writing {fmt.upper()}", t_write)
+        exporter(sheet, out_path, progress=progress_write)
         elapsed_total = time.perf_counter() - t0
-        sys.stderr.write(f" done ({elapsed_export:.1f}s)\n")
-        sys.stderr.flush()
         print(f"  -> {out_path} ({_size_str(out_path.stat().st_size)})  [{elapsed_total:.1f}s total]")
 
         if sheet.warnings:
@@ -156,6 +210,10 @@ def main(argv: list[str] | None = None) -> int:
     p_conv.add_argument(
         "--schema", action="store_true",
         help="Also write a .schema.json file alongside the output",
+    )
+    p_conv.add_argument(
+        "-y", "--force", action="store_true",
+        help="Overwrite existing files without asking",
     )
     p_conv.set_defaults(func=_run_convert)
 
