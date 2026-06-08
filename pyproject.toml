@@ -9,7 +9,7 @@ description = "Recover data from XLS files that exceed the 65,536-row limit"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.9"
-authors = [{ name = "seonhwa" }]
+authors = [{ name = "seonhwa17kim" }]
 keywords = ["xls", "excel", "biff", "recovery", "data"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -45,5 +45,5 @@ dev = [
 long-xls = "long_xls.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/seonhwa/long-xls"
-Issues = "https://github.com/seonhwa/long-xls/issues"
+Homepage = "https://github.com/seonhwa17kim/long-xls"
+Issues = "https://github.com/seonhwa17kim/long-xls/issues"
